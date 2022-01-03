@@ -4,7 +4,7 @@ import math
 
 
 class StochasticGates(nn.Module):
-    def __init__(self, size, sigma, lam, gate_init=None):
+    def __init__(self, size, sigma, lam, device, gate_init=None):
         super().__init__()
         self.size = size
         if gate_init is None:
@@ -14,7 +14,7 @@ class StochasticGates(nn.Module):
         self.mus = nn.Parameter(mus, requires_grad=True)
         self.sigma = sigma
         self.lam = lam
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = device
 
     def forward(self, x):
         gaussian = self.sigma * torch.randn(self.mus.size()) * self.training
@@ -25,10 +25,10 @@ class StochasticGates(nn.Module):
 
     @staticmethod
     def make_bernoulli(z):
-        return torch.clamp(z + 1.5, 0.0, 1.0)
+        return torch.clamp(z, 0.0, 1.0)
 
     def get_reg(self):
-        return self.lam * torch.mean((1 + torch.erf(((self.mus + 1.5) / self.sigma) / math.sqrt(2))) / 2)
+        return self.lam * torch.mean((1 + torch.erf(((self.mus) / self.sigma) / math.sqrt(2))) / 2)
 
     def get_gate(self):
         return self.make_bernoulli(self.mus)

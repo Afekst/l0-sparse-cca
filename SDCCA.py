@@ -4,7 +4,7 @@ import numpy as np
 from stg import StochasticGates
 
 class SparseDeepCCA(nn.Module):
-    def __init__(self, x_features, y_features, x_architecture, y_architecture, lamx, lamy, X=None, Y=None):
+    def __init__(self, x_features, y_features, x_architecture, y_architecture, lamx, lamy, device, X=None, Y=None):
         """
         c'tor to l0-DCCA class
         :param x_features: Dx
@@ -21,10 +21,11 @@ class SparseDeepCCA(nn.Module):
             raise ValueError('final layer in each network must be the same size')
         if bool(X is None) != bool(Y is None):
             raise ValueError('for gate initialization, you must provide both X and Y.')
-        x_gates, y_gates = self.gates_init(X, Y, 5)
+        self.device = device
+        x_gates, y_gates = self.gates_init(X, Y, 100)
         self.f = self._create_network(x_features, x_architecture, lamx, x_gates)
         self.g = self._create_network(y_features, y_architecture, lamy, y_gates)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
 
     def forward(self, X, Y):
         """
@@ -37,7 +38,7 @@ class SparseDeepCCA(nn.Module):
         if not self.training:
             return self.f[-1].weight, self.g[-1].weight
         else:
-            return -self._get_corr(X_hat, Y_hat) + self.f[0].get_reg() + self.g[0].get_reg()
+            return -self._get_corr(X_hat, Y_hat) + self.f[1].get_reg() + self.g[1].get_reg()
 
     @staticmethod
     def gates_init(X, Y, k):
@@ -66,28 +67,28 @@ class SparseDeepCCA(nn.Module):
 
 
     def get_gates(self):
-        return self.f[0].get_gate(), self.g[0].get_gate()
+        return self.f[1].get_gate(), self.g[1].get_gate()
 
-    @staticmethod
-    def _create_network(in_features, architecture, lam, gates=None):
+    def _create_network(self, in_features, architecture, lam, gates=None):
         """
         create a sequential network with STG
         :param in_features: number of features in th input to the network
-        :param architecture: python list where each element is the number on neurons in the layer
+        :param architecture: python list where each element is thh number on neurons in the layer
         :param lam: regularizer for the STG
         :return: sequential network with STG, and len(architecture) layers
         """
         layers = nn.ModuleList([])
-        layers.append(StochasticGates(in_features, 1, lam, gates))
+        layers.append(nn.BatchNorm1d(in_features))
+        layers.append(StochasticGates(in_features, 1, lam, self.device, gates))
         for i in range(len(architecture)):
             if i == 0:
                 layers.append(nn.Linear(in_features, architecture[i]))
-                layers.append(nn.ReLU())
+                layers.append(nn.Tanh())
             elif i == len(architecture)-1:
                 layers.append(nn.Linear(architecture[i-1], architecture[i]))
             else:
                 layers.append(nn.Linear(architecture[i-1], architecture[i]))
-                layers.append(nn.ReLU())
+                layers.append(nn.Tanh())
         return nn.Sequential(*layers)
 
     def _get_corr(self, X, Y):
@@ -105,10 +106,10 @@ class SparseDeepCCA(nn.Module):
         C_xy = self._cov(psi_x, psi_y)
         C_xx = self._cov(psi_x, psi_x)
 
-        C_yy_inv_root = self._mat_to_the_power(C_yy+torch.eye(C_xx.shape[0], device=self.device)*1e-3, -0.5)
+        C_yy_inv_root = self._mat_to_the_power(C_yy+torch.eye(C_xx.shape[0], device=self.device)*1e-3, -0.5)  # DATA MUST BE SPARSE!
         C_xx_inv = torch.inverse(C_xx+torch.eye(C_xx.shape[0], device=self.device)*1e-3)
         M = torch.linalg.multi_dot([C_yy_inv_root, C_yx, C_xx_inv, C_xy, C_yy_inv_root])
-        return torch.trace(M)
+        return torch.trace(M)/M.shape[0]
 
     @staticmethod
     def _cov(psi_x, psi_y):
