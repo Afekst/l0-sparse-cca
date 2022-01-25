@@ -1,14 +1,20 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import utils
 from stg import StochasticGates
 import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 from SDCCA import SparseDeepCCA
-import faulthandler; faulthandler.enable()
+import faulthandler; faulthandler.enable()  # for segmentation fault debugging
+from timeit import default_timer as timer
+import utils
+from utils import XNet, YNet
 
+testing_on_cpu = False
 
 
 def gen_data(n=400, p=800, q=800, rho=0.9, flag=0, fac=1):
@@ -61,58 +67,74 @@ def gen_data(n=400, p=800, q=800, rho=0.9, flag=0, fac=1):
     return x, y, u, v, Sigma_xy
 
 
-def plot_gates(net, name, u=None, v=None):
-    g_x, g_y = net.get_gates()
+def train_step(net, funcs_opt, gates_opt, x, y):
+    funcs_opt.zero_grad()
+    gates_opt.zero_grad()
+    loss = net(x, y).mean()
+    loss.backward()
+    funcs_opt.step()
+    gates_opt.step()
+    return loss
+
+
+def plot_gates(net, name):
+    if testing_on_cpu:
+        return
+    g_x, g_y = net.module.get_gates()
     g_x = g_x.cpu().detach().numpy()
     np.save('gates.npy', g_x)
-    plt.imshow(np.reshape(g_x, (110, 136)))
+    #plt.imshow(np.reshape(g_x, (340, 270)))
+    plt.imshow(g_x)
     plt.colorbar()
-    if u is not None:
-        plt.plot(range(800), u)
     plt.title(f'x gates,  {name}')
     plt.savefig(f'x_gates/x_gates_{name}.png')
     plt.close()
     plt.plot(g_y.cpu().detach().numpy())
-    if v is not None:
-        plt.plot(range(800), v)
     plt.title(f'y gates,  {name}')
     plt.savefig(f'y_gates/y_gates_{name}.png')
     plt.close()
-    
-def train(net, optimizer, x, y):
-    optimizer.zero_grad()
-    loss = net(x, y)
-    loss.backward()
-    optimizer.step()
-    return loss
-    
-    
-    
+
+
 
 
 def main(args):
-    device = torch.device(f'cuda:{args.cuda}' if torch.cuda.is_available() else 'cpu')
-    x, y, u, v, sigma_xy = gen_data(400, 800, 800, flag=2)
-    x = torch.Tensor(x).to(device)
-    y = torch.Tensor(y).to(device)
-    #x = np.load('bennet_flow.npy')
-    #y = np.load('bennet_audio.npy').T
-    x = torch.Tensor(x).to(device)
-    y = torch.Tensor(y).to(device)
-    lamx = 0.05
-    lamy = 0.05
-    net = SparseDeepCCA(x.shape[1], y.shape[1], [4096, 2048, 1024, 1024, 1024, 64], [4096, 2048, 1024, 64], lamx, lamy, device)
+    device = torch.device(f'cuda:{args.cuda[0]}' if torch.cuda.is_available() else 'cpu')
+    if testing_on_cpu:
+        x, y, u, v, sigma_xy = gen_data(400, 800, 800, flag=2)
+    else:
+        x = np.load('biden_vid.npy')
+        y = np.load('biden_audio.npy').T
+    lamx = 0
+    lamy = 0
+    x_net = XNet()
+    y_net = YNet(y.shape[1])
+    net = SparseDeepCCA([x.shape[2], x.shape[3]], y.shape[1], x_net, y_net, lamx, lamy)
+    utils.print_parameters(net)
+    if torch.cuda.is_available():
+        net = nn.DataParallel(net, device_ids=args.cuda)
+    else:
+        net = nn.DataParallel(net)  # because nn.DataParallel wraps nn.Module
     net = net.to(device)
     net.train()
-    optimizer = optim.Adam(net.parameters())
-    #plot_gates(net, f'{lamx}_{lamy}_0_bennet')
-    loss=[]
-    for epoch in range(50000):
-        loss.append(train(net, optimizer, x, y).item())
+    x = torch.Tensor(x).to(device)
+    y = torch.Tensor(y).to(device)
+    funcs_params = net.module.get_function_parameters()
+    print(len(funcs_params))
+    gates_params = net.module.get_gates_parameters()
+    print(len(gates_params))
+    funcs_opt = optim.Adam(funcs_params, lr=1e-4)
+    gates_opt = optim.Adam(gates_params, lr=1e-3)
+    plot_gates(net, f'{lamx}_{lamy}_0_biden')
+    loss = []
+    start = timer()
+    for epoch in range(100000):
+        loss.append(train_step(net, funcs_opt, gates_opt, x, y).item())
         if (epoch + 1) % 100 == 0:
-            print(f'epoch: {epoch + 1}    loss: {loss[-1]}    lam: {lamx},{lamy}')
-        if (epoch + 1) % 1000 == 0:
-            plot_gates(net, f'{lamx}_{lamy}_{epoch+1}_bennet')
+            end = timer()
+            print(f'epoch: {epoch + 1}    loss: {loss[-1]:.4f}    lam: {lamx},{lamy}    time={end-start:.2f}')
+            start = end
+        if (epoch + 1) % 100 == 0:
+            plot_gates(net, f'{lamx}_{lamy}_{epoch+1}_biden')
     plt.plot(loss)
     plt.savefig('loss.png')
     plt.close()
@@ -122,9 +144,12 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('')
     parser.add_argument('--cuda',
-                        help='gpu index',
+                        help='gpu indexes, in [1,2,3] format',
                         type=str,
-                        default="0")
+                        default="[0]")
     args = parser.parse_args()
+
+    args.cuda = args.cuda.strip('][').split(',')
+    args.cuda = [int(e) for e in args.cuda]
     main(args)
 

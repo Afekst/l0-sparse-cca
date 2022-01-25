@@ -4,7 +4,7 @@ import numpy as np
 from stg import StochasticGates
 
 class SparseDeepCCA(nn.Module):
-    def __init__(self, x_features, y_features, x_architecture, y_architecture, lamx, lamy, device, X=None, Y=None):
+    def __init__(self, x_dim, y_dim, x_net, y_net, lamx, lamy):
         """
         c'tor to l0-DCCA class
         :param x_features: Dx
@@ -13,18 +13,10 @@ class SparseDeepCCA(nn.Module):
         :param y_architecture: python list of neurons in each fully-connected layer for Y modality
         :param lamx: regularizer for X gates
         :param lamy: regularizer for Y gates
-        :param X: samples used for gates initialization
-        :param Y: samples used for gates initialization
         """
         super().__init__()
-        if x_architecture[-1] != y_architecture[-1]:
-            raise ValueError('final layer in each network must be the same size')
-        if bool(X is None) != bool(Y is None):
-            raise ValueError('for gate initialization, you must provide both X and Y.')
-        self.device = device
-        x_gates, y_gates = self.gates_init(X, Y, 100)
-        self.f = self._create_network(x_features, x_architecture, lamx, x_gates)
-        self.g = self._create_network(y_features, y_architecture, lamy, y_gates)
+        self.f = self._create_network(x_dim, x_net, lamx)
+        self.g = self._create_network(y_dim, y_net, lamy)
         
 
     def forward(self, X, Y):
@@ -35,61 +27,28 @@ class SparseDeepCCA(nn.Module):
         :return: if eval then the output of each non-linear function, if train then return the loss function
         """
         X_hat, Y_hat = self.f(X), self.g(Y)
-        if not self.training:
-            return self.f[-1].weight, self.g[-1].weight
-        else:
-            return -self._get_corr(X_hat, Y_hat) + self.f[1].get_reg() + self.g[1].get_reg()
-
-    @staticmethod
-    def gates_init(X, Y, k):
-        """
-        calculate initial guess for gates value based on CCA
-        :param X: samples used for gates initialization
-        :param Y: samples used for gates initialization
-        :param k: number of active gates
-        :return: initial guess for the gates
-        """
-        if X is None or Y is None:
-            return None, None
-        X = X.cpu().detach().numpy()
-        Y = Y.cpu().detach().numpy()
-        N = X.shape[0]
-        C_xy = (X.T @ Y)/(N - 1)
-        thresh = np.percentile(np.abs(C_xy.reshape(-1)), 100 * (1 - k / X.shape[1]))
-        C_xy[np.abs(C_xy) < thresh] = 0
-        [U0, s, V0] = np.linalg.svd(C_xy)
-        uu = np.abs(U0[:, 0])
-        uu[uu < 1 * thresh] -= 1.5
-        vv = np.abs(V0[0, :])
-        vv[vv < 1 * thresh] -= 1.5
-
-        return uu, vv
-
+        return -self._get_corr(X_hat, Y_hat) + self.f[0].get_reg() + self.g[0].get_reg()
 
     def get_gates(self):
-        return self.f[1].get_gate(), self.g[1].get_gate()
+        return self.f[0].get_gates(), self.g[0].get_gates()
 
-    def _create_network(self, in_features, architecture, lam, gates=None):
-        """
-        create a sequential network with STG
-        :param in_features: number of features in th input to the network
-        :param architecture: python list where each element is thh number on neurons in the layer
-        :param lam: regularizer for the STG
-        :return: sequential network with STG, and len(architecture) layers
-        """
-        layers = nn.ModuleList([])
-        layers.append(nn.BatchNorm1d(in_features))
-        layers.append(StochasticGates(in_features, 1, lam, self.device, gates))
-        for i in range(len(architecture)):
-            if i == 0:
-                layers.append(nn.Linear(in_features, architecture[i]))
-                layers.append(nn.Tanh())
-            elif i == len(architecture)-1:
-                layers.append(nn.Linear(architecture[i-1], architecture[i]))
-            else:
-                layers.append(nn.Linear(architecture[i-1], architecture[i]))
-                layers.append(nn.Tanh())
-        return nn.Sequential(*layers)
+    def get_function_parameters(self):
+        params = list()
+        for net in [self.f, self.g]:
+            params += list(net[1].parameters())
+        return params
+
+    def get_gates_parameters(self):
+        params = list()
+        for net in [self.f, self.g]:
+            params += list(net[0].parameters())
+        return params
+
+
+    @staticmethod
+    def _create_network(in_features, net, lam):
+        return nn.Sequential(StochasticGates(in_features, 1, lam),
+                             net)
 
     def _get_corr(self, X, Y):
         """
@@ -106,8 +65,8 @@ class SparseDeepCCA(nn.Module):
         C_xy = self._cov(psi_x, psi_y)
         C_xx = self._cov(psi_x, psi_x)
 
-        C_yy_inv_root = self._mat_to_the_power(C_yy+torch.eye(C_xx.shape[0], device=self.device)*1e-3, -0.5)  # DATA MUST BE SPARSE!
-        C_xx_inv = torch.inverse(C_xx+torch.eye(C_xx.shape[0], device=self.device)*1e-3)
+        C_yy_inv_root = self._mat_to_the_power(C_yy+torch.eye(C_yy.shape[0], device=Y.device)*1e-3, -0.5)
+        C_xx_inv = torch.inverse(C_xx+torch.eye(C_xx.shape[0], device=X.device)*1e-3)
         M = torch.linalg.multi_dot([C_yy_inv_root, C_yx, C_xx_inv, C_xy, C_yy_inv_root])
         return torch.trace(M)/M.shape[0]
 
