@@ -8,16 +8,16 @@ class XNet(nn.Module):
         super(XNet, self).__init__()
 
         self.net = nn.Sequential(
-            nn.Conv2d(3, 6, 5),
+            nn.Conv2d(1, 6, 5),
             nn.MaxPool2d(2, 2),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Conv2d(6, 8, 3),
             nn.MaxPool2d(2, 2),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(8*19*14, 128),
+            nn.Linear(8*25*20, 256),
             nn.Tanh(),
-            nn.Linear(128, 64),
+            nn.Linear(256, 64),
             nn.Tanh()
         )
 
@@ -27,7 +27,7 @@ class XNet(nn.Module):
 
 class YNet(nn.Module):
     def __init__(self, in_dim):
-        super(XNet, self).__init__()
+        super(YNet, self).__init__()
 
         self.net = nn.Sequential(
             nn.Linear(in_dim, 512),

@@ -13,6 +13,7 @@ import faulthandler; faulthandler.enable()  # for segmentation fault debugging
 from timeit import default_timer as timer
 import utils
 from utils import XNet, YNet
+from scipy.io import loadmat
 
 testing_on_cpu = False
 
@@ -81,7 +82,7 @@ def plot_gates(net, name):
     if testing_on_cpu:
         return
     g_x, g_y = net.module.get_gates()
-    g_x = g_x.cpu().detach().numpy()
+    g_x = g_x.cpu().detach().numpy().T
     np.save('gates.npy', g_x)
     #plt.imshow(np.reshape(g_x, (340, 270)))
     plt.imshow(g_x)
@@ -102,13 +103,17 @@ def main(args):
     if testing_on_cpu:
         x, y, u, v, sigma_xy = gen_data(400, 800, 800, flag=2)
     else:
-        x = np.load('biden_vid.npy')
-        y = np.load('biden_audio.npy').T
-    lamx = 0
-    lamy = 0
+        x = loadmat('matlab_try/flow_2.mat')['out']
+        x = np.expand_dims(x, axis=2)
+        x = x.T
+        print(x.shape)
+        y = np.load('vad_audio.npy').T
+        print(y.shape)
+    lamx = args.lamx
+    lamy = args.lamy
     x_net = XNet()
     y_net = YNet(y.shape[1])
-    net = SparseDeepCCA([x.shape[2], x.shape[3]], y.shape[1], x_net, y_net, lamx, lamy)
+    net = SparseDeepCCA([x.shape[2], x.shape[3]], y.shape[1], x_net, y_net, lamx, lamy, 1, 1)
     utils.print_parameters(net)
     if torch.cuda.is_available():
         net = nn.DataParallel(net, device_ids=args.cuda)
@@ -119,24 +124,22 @@ def main(args):
     x = torch.Tensor(x).to(device)
     y = torch.Tensor(y).to(device)
     funcs_params = net.module.get_function_parameters()
-    print(len(funcs_params))
     gates_params = net.module.get_gates_parameters()
-    print(len(gates_params))
     funcs_opt = optim.Adam(funcs_params, lr=1e-4)
     gates_opt = optim.Adam(gates_params, lr=1e-3)
-    plot_gates(net, f'{lamx}_{lamy}_0_biden')
+    plot_gates(net, f'{lamx}_{lamy}_0_vad_2')
     loss = []
     start = timer()
     for epoch in range(100000):
         loss.append(train_step(net, funcs_opt, gates_opt, x, y).item())
         if (epoch + 1) % 100 == 0:
             end = timer()
-            print(f'epoch: {epoch + 1}    loss: {loss[-1]:.4f}    lam: {lamx},{lamy}    time={end-start:.2f}')
+            print(f'epoch: {epoch + 1}    loss: {loss[-1]:.4f}    lam: {lamx},{lamy}    time: {end-start:.2f}')
             start = end
-        if (epoch + 1) % 100 == 0:
-            plot_gates(net, f'{lamx}_{lamy}_{epoch+1}_biden')
+        if (epoch + 1) % 1000 == 0:
+            plot_gates(net, f'{lamx}_{lamy}_{epoch+1}_vad_2')
     plt.plot(loss)
-    plt.savefig('loss.png')
+    plt.savefig('loss_2.png')
     plt.close()
     
 
@@ -146,7 +149,15 @@ if __name__ == '__main__':
     parser.add_argument('--cuda',
                         help='gpu indexes, in [1,2,3] format',
                         type=str,
-                        default="[0]")
+                        default="[1,2,3]")
+    parser.add_argument('--lamx',
+                        help='x gates reg',
+                        type=float,
+                        default=1.0)
+    parser.add_argument('--lamy',
+                        help='y gates reg',
+                        type=float,
+                        default=1.0)
     args = parser.parse_args()
 
     args.cuda = args.cuda.strip('][').split(',')

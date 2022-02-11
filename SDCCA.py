@@ -4,7 +4,7 @@ import numpy as np
 from stg import StochasticGates
 
 class SparseDeepCCA(nn.Module):
-    def __init__(self, x_dim, y_dim, x_net, y_net, lamx, lamy):
+    def __init__(self, x_dim, y_dim, x_net, y_net, lamx, lamy, sigmax=1, sigmay=1):
         """
         c'tor to l0-DCCA class
         :param x_features: Dx
@@ -15,8 +15,8 @@ class SparseDeepCCA(nn.Module):
         :param lamy: regularizer for Y gates
         """
         super().__init__()
-        self.f = self._create_network(x_dim, x_net, lamx)
-        self.g = self._create_network(y_dim, y_net, lamy)
+        self.f = self._create_network(x_dim, x_net, lamx, sigmax)
+        self.g = self._create_network(y_dim, y_net, lamy, sigmay)
         
 
     def forward(self, X, Y):
@@ -46,8 +46,8 @@ class SparseDeepCCA(nn.Module):
 
 
     @staticmethod
-    def _create_network(in_features, net, lam):
-        return nn.Sequential(StochasticGates(in_features, 1, lam),
+    def _create_network(in_features, net, lam, sigma):
+        return nn.Sequential(StochasticGates(in_features, sigma, lam),
                              net)
 
     def _get_corr(self, X, Y):
