@@ -17,7 +17,7 @@ class StochasticGates(nn.Module):
 
     def forward(self, x):
         gaussian = self.sigma * torch.randn(self.mus.size()) * self.training
-        shifted_gaussian = self.mus + 1.5 + gaussian.to(x.device)
+        shifted_gaussian = self.mus + gaussian.to(x.device)
         z = self.make_bernoulli(shifted_gaussian)
         new_x = x * z
         return new_x

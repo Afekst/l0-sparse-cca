@@ -3,42 +3,56 @@ import torch.nn as nn
 import numpy as np
 from stg import StochasticGates
 
+
 class SparseDeepCCA(nn.Module):
     def __init__(self, x_dim, y_dim, x_net, y_net, lamx, lamy, sigmax=1, sigmay=1):
         """
         c'tor to l0-DCCA class
-        :param x_features: Dx
-        :param y_features: Dy
-        :param x_architecture: python list of neurons in each fully-connected layer for X modality
-        :param y_architecture: python list of neurons in each fully-connected layer for Y modality
-        :param lamx: regularizer for X gates
-        :param lamy: regularizer for Y gates
+        :param x_dim: Dx
+        :param y_dim: Dy
+        :param x_net: non-linear function for x modality
+        :param y_net: non-linear function for y modality
+        :param lamx: regularizer for x gates
+        :param lamy: regularizer for y gates
+        :param sigmax: std for x gates
+        :param sigmay: std for y gates
         """
         super().__init__()
         self.f = self._create_network(x_dim, x_net, lamx, sigmax)
         self.g = self._create_network(y_dim, y_net, lamy, sigmay)
-        
 
     def forward(self, X, Y):
         """
         forward pass in l0-DCCA
         :param X: 1st modality N (samples) x D_x (features)
         :param Y: 2nd modality N (samples) x D_y (features)
-        :return: if eval then the output of each non-linear function, if train then return the loss function
+        :return: loss function
         """
         X_hat, Y_hat = self.f(X), self.g(Y)
         return -self._get_corr(X_hat, Y_hat) + self.f[0].get_reg() + self.g[0].get_reg()
 
     def get_gates(self):
+        """
+        use this function to retrieve the gates values for each modality
+        :return: gates values
+        """
         return self.f[0].get_gates(), self.g[0].get_gates()
 
     def get_function_parameters(self):
+        """
+        use this function if you wish to use a different optimizer for functions and gates
+        :return: learnable parameters of f and g
+        """
         params = list()
         for net in [self.f, self.g]:
             params += list(net[1].parameters())
         return params
 
     def get_gates_parameters(self):
+        """
+        use this function if you wish to use a different optimizer for functions and gates
+        :return: learnable parameters of the gates
+        """
         params = list()
         for net in [self.f, self.g]:
             params += list(net[0].parameters())
@@ -47,6 +61,14 @@ class SparseDeepCCA(nn.Module):
 
     @staticmethod
     def _create_network(in_features, net, lam, sigma):
+        """
+        create the full network for each modality
+        :param in_features: number of feature (and shape) of the gates
+        :param net: the non-linearity to be used
+        :param lam: the regularizer of the gates
+        :param sigma: the std of the gates
+        :return: sequential model in which there are gaets before the non-linearity
+        """
         return nn.Sequential(StochasticGates(in_features, sigma, lam),
                              net)
 
